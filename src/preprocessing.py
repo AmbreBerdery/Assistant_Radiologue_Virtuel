@@ -3,11 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-import numpy as np
 from PIL import Image
 
 try:
-    import pydicom
 except ImportError:  # pragma: no cover - dependency is optional at import time
     pydicom = None
 
