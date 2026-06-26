@@ -8,82 +8,88 @@ import sys
 import zipfile
 from pathlib import Path
 
-
-COMPETITION = "rsna-pneumonia-detection-challenge"
+COMPETITION_NAME = "rsna-pneumonia-detection-challenge"
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "raw" / "rsna"
 
 
-def has_kaggle_credentials() -> bool:
-    """Check whether Kaggle credentials are likely configured locally."""
+def kaggle_credentials_available() -> bool:
+    """Return True if Kaggle credentials seem to be configured locally.
+
+    Credentials must stay outside the GitHub repository.
+    """
     kaggle_json = Path.home() / ".kaggle" / "kaggle.json"
-    env_credentials = bool(os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"))
+    env_credentials = bool(os.getenv("KAGGLE_USERNAME") and os.getenv("KAGGLE_KEY"))
     return kaggle_json.exists() or env_credentials
 
 
-def check_kaggle_cli() -> None:
-    """Fail early with a clear message if the Kaggle CLI is missing."""
-    if shutil.which("kaggle") is None:
+def kaggle_cli_available() -> bool:
+    """Return True if the Kaggle command-line tool is available."""
+    return shutil.which("kaggle") is not None
+
+
+def validate_kaggle_setup() -> None:
+    """Validate local Kaggle setup before launching a download."""
+    if not kaggle_cli_available():
         raise RuntimeError(
-            "Kaggle CLI not found.\n"
-            "Install it with:\n"
-            "  pip install kaggle\n"
-            "Then configure your Kaggle API token. Do not commit kaggle.json."
+            "Kaggle CLI is not installed. Install it with: pip install kaggle"
         )
 
-    if not has_kaggle_credentials():
+    if not kaggle_credentials_available():
         raise RuntimeError(
-            "Kaggle credentials not found.\n"
-            "Create an API token from your Kaggle account and place kaggle.json in:\n"
-            "  ~/.kaggle/kaggle.json\n"
-            "or set KAGGLE_USERNAME and KAGGLE_KEY as environment variables.\n"
-            "Never commit kaggle.json to GitHub."
+            "Kaggle credentials were not found. Create a Kaggle API token and place "
+            "kaggle.json in ~/.kaggle/kaggle.json, or set KAGGLE_USERNAME and "
+            "KAGGLE_KEY as environment variables. Never commit kaggle.json."
         )
 
 
 def run_command(command: list[str]) -> None:
-    """Run a shell command and raise a readable error if it fails."""
+    """Run a shell command safely and raise a readable error if it fails."""
     print("+", " ".join(command))
     completed = subprocess.run(command, check=False)
 
     if completed.returncode != 0:
         raise RuntimeError(
-            "Kaggle download failed.\n"
-            "Possible causes:\n"
-            "- Kaggle API token is missing or invalid.\n"
-            "- You have not accepted the competition rules on Kaggle.\n"
-            "- The competition data is not accessible from your account.\n"
-            "- Network or storage issue."
+            "The Kaggle download command failed. Make sure you have accepted the "
+            "RSNA competition rules on Kaggle and that your API credentials are valid."
         )
 
 
-def unzip_archives(output_dir: Path) -> None:
-    """Extract every zip file found in the output directory."""
-    archives = sorted(output_dir.glob("*.zip"))
+def extract_zip_files(output_dir: Path) -> None:
+    """Extract all zip files found in output_dir."""
+    zip_files = sorted(output_dir.glob("*.zip"))
 
-    if not archives:
-        print("No zip archive found to extract.")
+    if not zip_files:
+        print("No zip files found to extract.")
         return
 
-    for archive in archives:
-        print(f"Extracting {archive.name} ...")
-        with zipfile.ZipFile(archive, "r") as zip_file:
-            zip_file.extractall(output_dir)
+    for zip_path in zip_files:
+        print(f"Extracting {zip_path.name} ...")
+        with zipfile.ZipFile(zip_path, "r") as archive:
+            archive.extractall(output_dir)
 
     print("Extraction complete.")
 
 
-def download_rsna(output_dir: Path, unzip: bool = True, force: bool = False) -> None:
-    """Download RSNA Pneumonia Detection Challenge data with Kaggle CLI."""
+def download_rsna(
+    output_dir: Path = DEFAULT_OUTPUT_DIR,
+    unzip: bool = True,
+    force: bool = False,
+) -> None:
+    """Download the RSNA Pneumonia Detection Challenge dataset locally.
+
+    The downloaded data must not be committed to GitHub.
+    """
+    output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    check_kaggle_cli()
+    validate_kaggle_setup()
 
     command = [
         "kaggle",
         "competitions",
         "download",
         "-c",
-        COMPETITION,
+        COMPETITION_NAME,
         "-p",
         str(output_dir),
     ]
@@ -92,23 +98,23 @@ def download_rsna(output_dir: Path, unzip: bool = True, force: bool = False) -> 
         command.append("--force")
 
     print("Downloading RSNA Pneumonia Detection Challenge dataset.")
-    print(f"Target directory: {output_dir}")
+    print(f"Output directory: {output_dir}")
     print("Reminder: do not commit downloaded medical data to GitHub.")
-    print("You must have accepted the Kaggle competition rules before running this script.")
 
     run_command(command)
 
     if unzip:
-        unzip_archives(output_dir)
+        extract_zip_files(output_dir)
 
-    print("\nDone.")
-    print("Expected local structure may include:")
-    print(f"  {output_dir / 'stage_2_train_images'}")
-    print(f"  {output_dir / 'stage_2_test_images'}")
-    print(f"  {output_dir / 'stage_2_train_labels.csv'}")
+    print("Done.")
+    print("Expected local files may include:")
+    print(f"- {output_dir / 'stage_2_train_images'}")
+    print(f"- {output_dir / 'stage_2_test_images'}")
+    print(f"- {output_dir / 'stage_2_train_labels.csv'}")
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description="Download RSNA Pneumonia Detection Challenge data locally."
     )
@@ -116,22 +122,23 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
-        help="Local output directory. Default: data/raw/rsna",
+        help="Download directory. Default: data/raw/rsna",
     )
     parser.add_argument(
         "--no-unzip",
         action="store_true",
-        help="Download zip files but do not extract them.",
+        help="Download the archive without extracting it.",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Force re-download if files already exist.",
+        help="Force re-download if Kaggle finds existing files.",
     )
     return parser.parse_args()
 
 
 def main() -> int:
+    """Command-line entrypoint."""
     args = parse_args()
 
     try:
@@ -141,7 +148,7 @@ def main() -> int:
             force=args.force,
         )
     except Exception as exc:
-        print(f"\nERROR: {exc}", file=sys.stderr)
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
     return 0
